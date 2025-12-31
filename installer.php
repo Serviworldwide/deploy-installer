@@ -26,9 +26,108 @@ register_shutdown_function(function() {
     }
 });
 
-// Prevent direct access if already configured (optional security)
-$installerLockFile = __DIR__ . '/.installer-lock';
-$isLocked = file_exists($installerLockFile);
+// Check if deployment is already configured
+$configFile = __DIR__ . '/deploy-config.php';
+$isAlreadyConfigured = false;
+$configToken = '';
+
+if (file_exists($configFile)) {
+    // Try to read and check the config file
+    $configContent = @file_get_contents($configFile);
+    if ($configContent !== false) {
+        // Check if SECRET_ACCESS_TOKEN is defined and not the default value
+        if (preg_match("/define\s*\(\s*['\"]SECRET_ACCESS_TOKEN['\"]\s*,\s*['\"]([^'\"]+)['\"]\s*\)/", $configContent, $matches)) {
+            $configToken = $matches[1];
+            // Check if it's not the default value and not empty
+            if (!empty($configToken) && $configToken !== 'BetterChangeMeNowOrSufferTheConsequences') {
+                // Also check if other required configs exist
+                if (preg_match("/define\s*\(\s*['\"]REMOTE_REPOSITORY['\"]/", $configContent) &&
+                    preg_match("/define\s*\(\s*['\"]TARGET_DIR['\"]/", $configContent)) {
+                    $isAlreadyConfigured = true;
+                }
+            }
+        }
+    }
+}
+
+// If already configured, show message and exit
+if ($isAlreadyConfigured) {
+    ?>
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Deployment Already Configured</title>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                min-height: 100vh;
+                padding: 20px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            .container {
+                max-width: 600px;
+                background: white;
+                border-radius: 12px;
+                box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                padding: 40px;
+                text-align: center;
+            }
+            h1 {
+                color: #4caf50;
+                margin-bottom: 20px;
+                font-size: 32px;
+            }
+            .alert {
+                background: #e8f5e9;
+                border-left: 4px solid #4caf50;
+                padding: 20px;
+                border-radius: 6px;
+                margin: 20px 0;
+                text-align: left;
+            }
+            .alert-info {
+                background: #e3f2fd;
+                border-left: 4px solid #2196f3;
+                color: #1565c0;
+            }
+            code {
+                background: #f5f5f5;
+                padding: 2px 6px;
+                border-radius: 3px;
+                font-family: 'Courier New', monospace;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>✓ Deployment Already Configured</h1>
+            <div class="alert">
+                <strong>Installation Complete</strong><br><br>
+                The deployment system has already been set up. The <code>deploy-config.php</code> file exists with a valid configuration.
+            </div>
+            <div class="alert alert-info">
+                <strong>Next Steps:</strong><br><br>
+                • Your deployment is active and will automatically deploy when you push to GitHub<br>
+                • To test deployment, push changes to your repository<br>
+                • To reconfigure, delete <code>deploy-config.php</code> and run the installer again<br>
+                • For security, consider removing <code>installer.php</code> after successful deployment
+            </div>
+        </div>
+    </body>
+    </html>
+    <?php
+    exit;
+}
 
 // Handle form submission
 $step = (isset($_POST['step']) && is_numeric($_POST['step'])) ? (int)$_POST['step'] : 1;

@@ -152,9 +152,8 @@ if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST') 
         // Step 2: Download files and generate SSH keys
         $currentDir = __DIR__;
         
-        // Download deploy.php from our repository
-        // Supports both public repos and private repos with GitHub token
-        $deployPhpUrl = 'https://github.com/Serviworldwide/deploy-installer/raw/refs/heads/main/deploy.php';
+        // Download deploy.php from our repository (public repo)
+        $deployPhpUrl = 'https://raw.githubusercontent.com/Serviworldwide/deploy-installer/main/deploy.php';
         $githubToken = getenv('GITHUB_TOKEN'); // Optional: Set GITHUB_TOKEN environment variable for private repos
         
         // Try downloading with authentication if token is available

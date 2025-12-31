@@ -55,15 +55,33 @@ function isFunctionEnabled($functionName) {
 }
 
 function checkBinary($command) {
-    if (!function_exists('shell_exec')) {
-        return false;
+    // Use the same path-finding logic as deploy.php
+    $commonPaths = array(
+        '/usr/local/cpanel/3rdparty/lib/path-bin',
+        '/usr/local/bin',
+        '/usr/bin',
+        '/opt/cpanel/ea-git-core/bin',
+        '/usr/local/cpanel/3rdparty/bin',
+    );
+    
+    // First try 'which' command if shell_exec is available
+    if (function_exists('shell_exec')) {
+        $pathResult = @shell_exec('which ' . escapeshellarg($command) . ' 2>/dev/null');
+        $path = is_string($pathResult) ? trim($pathResult) : '';
+        if ($path && file_exists($path)) {
+            return true;
+        }
     }
-    $result = @shell_exec('which ' . escapeshellarg($command) . ' 2>/dev/null');
-    if (empty($result)) {
-        return false;
+    
+    // Try common paths directly
+    foreach ($commonPaths as $basePath) {
+        $fullPath = $basePath . '/' . $command;
+        if (file_exists($fullPath) && is_executable($fullPath)) {
+            return true;
+        }
     }
-    $result = trim($result);
-    return !empty($result);
+    
+    return false;
 }
 
 function getHomeDir() {
@@ -135,23 +153,73 @@ if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST') 
         $currentDir = __DIR__;
         
         // Download deploy.php from our repository
-        $deployPhpUrl = 'https://raw.githubusercontent.com/Serviworldwide/deploy-installer/main/deploy.php';
-        $deployPhpContent = @file_get_contents($deployPhpUrl);
+        // Supports both public repos and private repos with GitHub token
+        $deployPhpUrl = 'https://github.com/Serviworldwide/deploy-installer/raw/refs/heads/main/deploy.php';
+        $githubToken = getenv('GITHUB_TOKEN'); // Optional: Set GITHUB_TOKEN environment variable for private repos
+        
+        // Try downloading with authentication if token is available
+        $deployPhpContent = false;
+        if (!empty($githubToken)) {
+            // Use GitHub API for authenticated access to private repos
+            $apiUrl = 'https://api.github.com/repos/Serviworldwide/deploy-installer/contents/deploy.php?ref=main';
+            $context = stream_context_create([
+                'http' => [
+                    'method' => 'GET',
+                    'header' => [
+                        'User-Agent: PHP',
+                        'Authorization: token ' . $githubToken,
+                        'Accept: application/vnd.github.v3.raw'
+                    ]
+                ]
+            ]);
+            $deployPhpContent = @file_get_contents($apiUrl, false, $context);
+        }
+        
+        // Fallback to direct raw URL (works for public repos)
         if ($deployPhpContent === false) {
-            // Try with curl if file_get_contents fails
-            if (function_exists('curl_init')) {
-                $ch = curl_init($deployPhpUrl);
+            $deployPhpContent = @file_get_contents($deployPhpUrl);
+        }
+        
+        // Try with curl if file_get_contents fails
+        if ($deployPhpContent === false && function_exists('curl_init')) {
+            $ch = curl_init($deployPhpUrl);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            if (!empty($githubToken)) {
+                curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                    'Authorization: token ' . $githubToken,
+                    'User-Agent: PHP'
+                ]);
+            }
+            $deployPhpContent = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+            
+            // If still failed and token exists, try API endpoint
+            if ($deployPhpContent === false && !empty($githubToken) && $httpCode == 404) {
+                $apiUrl = 'https://api.github.com/repos/Serviworldwide/deploy-installer/contents/deploy.php?ref=main';
+                $ch = curl_init($apiUrl);
                 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-                curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-                curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+                curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                    'Authorization: token ' . $githubToken,
+                    'Accept: application/vnd.github.v3.raw',
+                    'User-Agent: PHP'
+                ]);
                 $deployPhpContent = curl_exec($ch);
                 curl_close($ch);
             }
         }
         
         if ($deployPhpContent !== false) {
-            if (file_put_contents($currentDir . '/deploy.php', $deployPhpContent)) {
-                $success[] = 'deploy.php downloaded successfully from Serviworldwide/deploy-installer repository';
+            $deployPhpFile = $currentDir . '/deploy.php';
+            $deployExists = file_exists($deployPhpFile);
+            if (file_put_contents($deployPhpFile, $deployPhpContent)) {
+                if ($deployExists) {
+                    $success[] = 'deploy.php updated from Serviworldwide/deploy-installer repository';
+                } else {
+                    $success[] = 'deploy.php downloaded successfully from Serviworldwide/deploy-installer repository';
+                }
             } else {
                 $errors[] = 'Failed to write deploy.php - check file permissions';
             }
@@ -201,7 +269,24 @@ if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST') 
                     $errors[] = 'SSH key generation may have failed - check permissions';
                 }
             } else {
+                // Key already exists - ensure it's in authorized_keys
                 $success[] = 'SSH key already exists';
+                
+                if (file_exists($deployKeyPub)) {
+                    $pubKeyContent = trim(file_get_contents($deployKeyPub));
+                    $authorizedKeysFile = $sshDir . '/authorized_keys';
+                    
+                    if (!file_exists($authorizedKeysFile)) {
+                        @touch($authorizedKeysFile);
+                        @chmod($authorizedKeysFile, 0600);
+                    }
+                    
+                    $authorizedKeys = file_exists($authorizedKeysFile) ? file_get_contents($authorizedKeysFile) : '';
+                    if (strpos($authorizedKeys, $pubKeyContent) === false) {
+                        file_put_contents($authorizedKeysFile, $pubKeyContent . "\n", FILE_APPEND);
+                        $success[] = 'Public key added to authorized_keys';
+                    }
+                }
             }
         }
         
@@ -311,9 +396,14 @@ define('EMAIL_ON_ERROR', false);
                 
                 // Write the config file
                 $configFile = __DIR__ . '/deploy-config.php';
+                $configExists = file_exists($configFile);
                 if (file_put_contents($configFile, $configContent)) {
                     @chmod($configFile, 0600);
-                    $success[] = 'deploy-config.php created successfully';
+                    if ($configExists) {
+                        $success[] = 'deploy-config.php updated successfully (previous configuration was overwritten)';
+                    } else {
+                        $success[] = 'deploy-config.php created successfully';
+                    }
                     $step = 4; // Move to results step
                 } else {
                     $errors[] = 'Failed to write deploy-config.php - check file permissions';
@@ -795,9 +885,19 @@ $webhookUrl = $secretToken ? $deployScriptUrl . '?sat=' . urlencode($secretToken
                             <?php if (!$installerRequirements['php_exec']['status'] || !$installerRequirements['php_shell_exec']['status']): ?>
                                 <br><br>
                                 <strong>Note:</strong> exec() and shell_exec() are needed for deployment. Enable in cPanel → MultiPHP Manager → PHP-FPM Settings → remove ban on exec_shell.
+                                <br><br>
+                                <strong>SSH Key Generation:</strong> If shell_exec is disabled, you can generate SSH keys manually in cPanel Terminal:
+                                <div style="background: #2d2d2d; color: #f8f8f2; padding: 10px; margin-top: 10px; border-radius: 4px; font-family: monospace; font-size: 12px;">
+                                    cd ~<br>
+                                    mkdir -p ~/.ssh<br>
+                                    chmod 700 ~/.ssh<br>
+                                    ssh-keygen -t ed25519 -f ~/.ssh/deploy_key<br>
+                                    <em>(Press Enter twice for no password)</em><br>
+                                    cat ~/.ssh/deploy_key.pub >> ~/.ssh/authorized_keys<br>
+                                    chmod 600 ~/.ssh/authorized_keys<br>
+                                    cat ~/.ssh/deploy_key.pub
+                                </div>
                             <?php endif; ?>
-                            <br><br>
-                            <strong>Helper Tools:</strong> <a href="generate-ssh-key.php" style="color: #2196f3; text-decoration: underline;">🔑 Generate SSH Keys</a> - Use this if you need to create SSH keys manually.
                         </div>
                     <?php else: ?>
                         <div class="alert alert-success" style="margin-top: 20px;">

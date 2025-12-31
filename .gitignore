@@ -1,5 +1,5 @@
 # Generated files (downloaded by installer)
-deploy.php
+# Note: deploy.php is kept in repo with cPanel-specific git path fixes
 deploy-config.php
 deploy-config.example.php
 

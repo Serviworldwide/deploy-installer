@@ -1,0 +1,18 @@
+# Generated files (downloaded by installer)
+deploy.php
+deploy-config.php
+deploy-config.example.php
+
+# Installer lock file
+.installer-lock
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Deploy Installer
 
 Automated installer script for setting up [simple-php-git-deploy](https://github.com/markomarkovic/simple-php-git-deploy) on cPanel servers.
@@ -15,9 +14,10 @@ This installer automates the entire setup process for deploying code from GitHub
 
 ## Installation
 
-1. Upload **only** `installer.php` to your cPanel account's `public_html` directory
-2. Access the installer via your web browser: `http://yourdomain.com/installer.php`
-3. Follow the step-by-step wizard
+1. Download `installer.php` from: https://raw.githubusercontent.com/Serviworldwide/deploy-installer/main/installer.php
+2. Upload **only** `installer.php` to your cPanel account's `public_html` directory
+3. Access the installer via your web browser: `http://yourdomain.com/installer.php`
+4. Follow the step-by-step wizard
 
 The installer will automatically download `deploy.php` and generate all necessary configuration files.
 

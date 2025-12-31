@@ -14,7 +14,12 @@ This installer automates the entire setup process for deploying code from GitHub
 
 ## Installation
 
-1. Download `installer.php` from: https://raw.githubusercontent.com/Serviworldwide/deploy-installer/main/installer.php
+1. Download `installer.php`:
+   - **Direct download**: [Right-click this link](https://raw.githubusercontent.com/Serviworldwide/deploy-installer/main/installer.php) and select "Save Link As" or "Save Target As"
+   - **Or use curl/wget**: 
+     ```bash
+     curl -L https://raw.githubusercontent.com/Serviworldwide/deploy-installer/main/installer.php -o installer.php
+     ```
 2. Upload **only** `installer.php` to your cPanel account's `public_html` directory
 3. Access the installer via your web browser: `http://yourdomain.com/installer.php`
 4. Follow the step-by-step wizard

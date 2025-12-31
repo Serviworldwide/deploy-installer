@@ -27,18 +27,18 @@ This installer automates the entire setup process for deploying code from GitHub
 - Displays clear status indicators for each requirement
 
 ### Step 2: Download & Setup
-- Automatically downloads `deploy.php` and `deploy-config.example.php` from GitHub
-- Generates SSH key pair (ed25519)
+- Automatically downloads `deploy.php` from Serviworldwide/deploy-installer repository
+- Generates SSH key pair (ed25519) if needed
 - Adds public key to authorized_keys
 - Sets proper file permissions
 
 ### Step 3: Configuration
 - Collects deployment configuration:
   - Secret access token (with auto-generate option)
-  - GitHub repository URL (SSH format)
+  - GitHub repository URL (automatically converts to SSH format)
   - Branch name
   - Target directory path
-- Generates `deploy-config.php` with proper permissions (600)
+- Generates complete `deploy-config.php` file with proper permissions (600)
 
 ### Step 4: Results
 - Displays SSH public key with copy button

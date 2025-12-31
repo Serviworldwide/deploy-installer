@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Deploy Installer
 
 Automated installer script for setting up [simple-php-git-deploy](https://github.com/markomarkovic/simple-php-git-deploy) on cPanel servers.

@@ -217,32 +217,94 @@ function generateSecureToken($length = 16) {
     return substr(str_shuffle(str_repeat($chars, ceil($length / strlen($chars)))), 0, $length);
 }
 
-function convertGithubUrlToSsh($url) {
+function convertGithubUrlToSsh($url, $hostAlias = null) {
     // Remove trailing slash if present
     $url = rtrim(trim($url), '/');
-    
-    // If it's already in SSH format, return as is
-    if (preg_match('/^git@github\.com:/', $url)) {
-        // Ensure it ends with .git
-        return rtrim($url, '.git') . '.git';
+
+    // Determine the host to use (github.com or custom alias)
+    $gitHost = $hostAlias ? $hostAlias : 'github.com';
+
+    // If it's already in SSH format, handle it
+    if (preg_match('/^git@([^:]+):([^\/]+)\/([^\/]+?)(?:\.git)?$/', $url, $matches)) {
+        $username = $matches[2];
+        $repo = rtrim($matches[3], '.git');
+        return "git@{$gitHost}:{$username}/{$repo}.git";
     }
-    
+
     // Handle https://github.com/username/repo format
     if (preg_match('#^https?://(www\.)?github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$#', $url, $matches)) {
         $username = $matches[2];
         $repo = rtrim($matches[3], '.git');
-        return "git@github.com:{$username}/{$repo}.git";
+        return "git@{$gitHost}:{$username}/{$repo}.git";
     }
-    
+
     // Handle github.com/username/repo format (without protocol)
     if (preg_match('#^(?:www\.)?github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$#', $url, $matches)) {
         $username = $matches[1];
         $repo = rtrim($matches[2], '.git');
-        return "git@github.com:{$username}/{$repo}.git";
+        return "git@{$gitHost}:{$username}/{$repo}.git";
     }
-    
+
     // If we can't parse it, return as is and let user fix it
     return $url;
+}
+
+function sanitizeSiteIdentifier($identifier) {
+    // Convert to lowercase and replace non-alphanumeric chars with hyphens
+    $sanitized = preg_replace('/[^a-z0-9]+/', '-', strtolower($identifier));
+    // Remove leading/trailing hyphens
+    $sanitized = trim($sanitized, '-');
+    // Limit length
+    return substr($sanitized, 0, 50);
+}
+
+function getDefaultSiteIdentifier() {
+    // Try to get domain from HTTP_HOST
+    $host = isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : '';
+    if (empty($host)) {
+        $host = isset($_SERVER['SERVER_NAME']) ? $_SERVER['SERVER_NAME'] : '';
+    }
+    // Remove port if present
+    $host = preg_replace('/:\d+$/', '', $host);
+    // Remove www. prefix
+    $host = preg_replace('/^www\./', '', $host);
+    return sanitizeSiteIdentifier($host);
+}
+
+function getHostAliasName($siteIdentifier) {
+    return 'github-' . $siteIdentifier;
+}
+
+function updateSshConfig($sshDir, $hostAlias, $keyPath) {
+    $configFile = $sshDir . '/config';
+    $existingConfig = '';
+
+    if (file_exists($configFile)) {
+        $existingConfig = file_get_contents($configFile);
+    }
+
+    // Check if this host alias already exists
+    $pattern = '/^Host\s+' . preg_quote($hostAlias, '/') . '\s*$/m';
+
+    // New entry to add
+    $newEntry = "\n# Deploy key for {$hostAlias}\nHost {$hostAlias}\n    HostName github.com\n    User git\n    IdentityFile {$keyPath}\n    IdentitiesOnly yes\n";
+
+    if (preg_match($pattern, $existingConfig)) {
+        // Host alias exists - update the entire block
+        // Match from "Host alias" to the next "Host " or end of file
+        $blockPattern = '/(#[^\n]*\n)?Host\s+' . preg_quote($hostAlias, '/') . '\s*\n(\s+[^\n]+\n)*/';
+        $existingConfig = preg_replace($blockPattern, trim($newEntry) . "\n", $existingConfig);
+        $result = file_put_contents($configFile, $existingConfig);
+    } else {
+        // Add new entry
+        $result = file_put_contents($configFile, $existingConfig . $newEntry);
+    }
+
+    if ($result !== false) {
+        @chmod($configFile, 0600);
+        return true;
+    }
+    return false;
 }
 
 // Process form submissions
@@ -250,6 +312,12 @@ if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST') 
     if ($step === 2) {
         // Step 2: Download files and generate SSH keys
         $currentDir = __DIR__;
+
+        // Get site identifier from form or generate default
+        $siteIdentifier = isset($_POST['site_identifier']) ? sanitizeSiteIdentifier($_POST['site_identifier']) : getDefaultSiteIdentifier();
+        if (empty($siteIdentifier)) {
+            $siteIdentifier = 'site-' . substr(md5(__DIR__), 0, 8);
+        }
         
         // Download deploy.php from our repository (public repo)
         $deployPhpUrl = 'https://raw.githubusercontent.com/Serviworldwide/deploy-installer/main/deploy.php';
@@ -325,67 +393,87 @@ if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST') 
             $errors[] = 'Failed to download deploy.php - check internet connection';
         }
         
-        // Generate SSH keys
+        // Generate SSH keys with unique name based on site identifier
         $homeDir = getHomeDir();
         if (empty($homeDir)) {
             $errors[] = 'Could not determine home directory. Please set HOME environment variable or contact your hosting provider.';
         } else {
             $sshDir = $homeDir . '/.ssh';
-            $deployKey = $sshDir . '/deploy_key';
+            $hostAlias = getHostAliasName($siteIdentifier);
+            $deployKey = $sshDir . '/deploy_key_' . $siteIdentifier;
             $deployKeyPub = $deployKey . '.pub';
-            
+
             if (!is_dir($sshDir)) {
                 @mkdir($sshDir, 0700, true);
             }
-            
+
             if (!file_exists($deployKey)) {
-                // Generate SSH key
+                // Generate SSH key with unique name
                 $keygenCmd = sprintf(
-                    'ssh-keygen -t ed25519 -f %s -N "" -q 2>&1',
-                    escapeshellarg($deployKey)
+                    'ssh-keygen -t ed25519 -f %s -N "" -q -C %s 2>&1',
+                    escapeshellarg($deployKey),
+                    escapeshellarg('deploy-key-' . $siteIdentifier)
                 );
                 $keygenOutput = @shell_exec($keygenCmd);
-                
+
                 if (file_exists($deployKeyPub)) {
-                    $success[] = 'SSH key pair generated successfully';
-                    
+                    $success[] = 'SSH key pair generated: deploy_key_' . $siteIdentifier;
+
                     // Add to authorized_keys
                     $pubKeyContent = trim(file_get_contents($deployKeyPub));
                     $authorizedKeysFile = $sshDir . '/authorized_keys';
-                    
+
                     if (!file_exists($authorizedKeysFile)) {
                         @touch($authorizedKeysFile);
                         @chmod($authorizedKeysFile, 0600);
                     }
-                    
+
                     $authorizedKeys = file_exists($authorizedKeysFile) ? file_get_contents($authorizedKeysFile) : '';
                     if (strpos($authorizedKeys, $pubKeyContent) === false) {
                         file_put_contents($authorizedKeysFile, $pubKeyContent . "\n", FILE_APPEND);
                         $success[] = 'Public key added to authorized_keys';
+                    }
+
+                    // Update SSH config with host alias
+                    if (updateSshConfig($sshDir, $hostAlias, $deployKey)) {
+                        $success[] = 'SSH config updated with host alias: ' . $hostAlias;
+                    } else {
+                        $errors[] = 'Failed to update SSH config - you may need to add the host alias manually';
                     }
                 } else {
                     $errors[] = 'SSH key generation may have failed - check permissions';
                 }
             } else {
-                // Key already exists - ensure it's in authorized_keys
-                $success[] = 'SSH key already exists';
-                
+                // Key already exists - ensure config is set up
+                $success[] = 'SSH key already exists: deploy_key_' . $siteIdentifier;
+
                 if (file_exists($deployKeyPub)) {
                     $pubKeyContent = trim(file_get_contents($deployKeyPub));
                     $authorizedKeysFile = $sshDir . '/authorized_keys';
-                    
+
                     if (!file_exists($authorizedKeysFile)) {
                         @touch($authorizedKeysFile);
                         @chmod($authorizedKeysFile, 0600);
                     }
-                    
+
                     $authorizedKeys = file_exists($authorizedKeysFile) ? file_get_contents($authorizedKeysFile) : '';
                     if (strpos($authorizedKeys, $pubKeyContent) === false) {
                         file_put_contents($authorizedKeysFile, $pubKeyContent . "\n", FILE_APPEND);
                         $success[] = 'Public key added to authorized_keys';
                     }
+
+                    // Ensure SSH config has the host alias
+                    if (updateSshConfig($sshDir, $hostAlias, $deployKey)) {
+                        $success[] = 'SSH config verified with host alias: ' . $hostAlias;
+                    }
                 }
             }
+
+            // Store site identifier in session for next steps
+            if (session_status() === PHP_SESSION_NONE) {
+                @session_start();
+            }
+            $_SESSION['site_identifier'] = $siteIdentifier;
         }
         
         if (empty($errors)) {
@@ -397,7 +485,19 @@ if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST') 
         $repoUrlInput = isset($_POST['repo_url']) ? trim($_POST['repo_url']) : '';
         $branch = isset($_POST['branch']) ? trim($_POST['branch']) : 'main';
         $targetDir = isset($_POST['target_dir']) ? trim($_POST['target_dir']) : '';
-        
+
+        // Get site identifier from session or POST
+        if (session_status() === PHP_SESSION_NONE) {
+            @session_start();
+        }
+        $siteIdentifier = isset($_POST['site_identifier']) ? sanitizeSiteIdentifier($_POST['site_identifier']) : '';
+        if (empty($siteIdentifier) && isset($_SESSION['site_identifier'])) {
+            $siteIdentifier = $_SESSION['site_identifier'];
+        }
+        if (empty($siteIdentifier)) {
+            $siteIdentifier = getDefaultSiteIdentifier();
+        }
+
         // Validation
         if (empty($secretToken)) {
             $errors[] = 'Secret access token is required';
@@ -408,9 +508,10 @@ if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST') 
         if (empty($targetDir)) {
             $errors[] = 'Target directory is required';
         }
-        
-        // Convert GitHub URL to SSH format
-        $repoUrl = !empty($repoUrlInput) ? convertGithubUrlToSsh($repoUrlInput) : '';
+
+        // Convert GitHub URL to SSH format with host alias for unique key support
+        $hostAlias = getHostAliasName($siteIdentifier);
+        $repoUrl = !empty($repoUrlInput) ? convertGithubUrlToSsh($repoUrlInput, $hostAlias) : '';
         
         // Ensure target directory has trailing slash
         if (!empty($targetDir) && substr($targetDir, -1) !== '/') {
@@ -532,13 +633,27 @@ foreach ($installerRequirements as $req) {
     }
 }
 
-// Get SSH public key if it exists
+// Get site identifier from session
+if (session_status() === PHP_SESSION_NONE) {
+    @session_start();
+}
+$currentSiteIdentifier = isset($_SESSION['site_identifier']) ? $_SESSION['site_identifier'] : getDefaultSiteIdentifier();
+$currentHostAlias = getHostAliasName($currentSiteIdentifier);
+
+// Get SSH public key if it exists (using site-specific key)
 $homeDir = getHomeDir();
 $sshPublicKey = '';
 if (!empty($homeDir)) {
-    $sshPublicKeyFile = $homeDir . '/.ssh/deploy_key.pub';
+    // Try site-specific key first
+    $sshPublicKeyFile = $homeDir . '/.ssh/deploy_key_' . $currentSiteIdentifier . '.pub';
     if (file_exists($sshPublicKeyFile)) {
         $sshPublicKey = trim(file_get_contents($sshPublicKeyFile));
+    } else {
+        // Fallback to old generic key for backwards compatibility
+        $sshPublicKeyFile = $homeDir . '/.ssh/deploy_key.pub';
+        if (file_exists($sshPublicKeyFile)) {
+            $sshPublicKey = trim(file_get_contents($sshPublicKeyFile));
+        }
     }
 }
 
@@ -984,16 +1099,28 @@ $webhookUrl = $secretToken ? $deployScriptUrl . '?sat=' . urlencode($secretToken
                                 <br><br>
                                 <strong>Note:</strong> exec() and shell_exec() are needed for deployment. Enable in cPanel → MultiPHP Manager → PHP-FPM Settings → remove ban on exec_shell.
                                 <br><br>
-                                <strong>SSH Key Generation:</strong> If shell_exec is disabled, you can generate SSH keys manually in cPanel Terminal:
+                                <strong>SSH Key Generation:</strong> If shell_exec is disabled, you can generate SSH keys manually in cPanel Terminal.
+                                Replace <code>SITE_ID</code> with your site identifier (e.g., example-com):
                                 <div style="background: #2d2d2d; color: #f8f8f2; padding: 10px; margin-top: 10px; border-radius: 4px; font-family: monospace; font-size: 12px;">
                                     cd ~<br>
                                     mkdir -p ~/.ssh<br>
                                     chmod 700 ~/.ssh<br>
-                                    ssh-keygen -t ed25519 -f ~/.ssh/deploy_key<br>
+                                    ssh-keygen -t ed25519 -f ~/.ssh/deploy_key_SITE_ID -C "deploy-key-SITE_ID"<br>
                                     <em>(Press Enter twice for no password)</em><br>
-                                    cat ~/.ssh/deploy_key.pub >> ~/.ssh/authorized_keys<br>
+                                    cat ~/.ssh/deploy_key_SITE_ID.pub >> ~/.ssh/authorized_keys<br>
                                     chmod 600 ~/.ssh/authorized_keys<br>
-                                    cat ~/.ssh/deploy_key.pub
+                                    <br>
+                                    <em># Add SSH config entry:</em><br>
+                                    cat >> ~/.ssh/config &lt;&lt;EOF<br>
+                                    Host github-SITE_ID<br>
+                                    &nbsp;&nbsp;&nbsp;&nbsp;HostName github.com<br>
+                                    &nbsp;&nbsp;&nbsp;&nbsp;User git<br>
+                                    &nbsp;&nbsp;&nbsp;&nbsp;IdentityFile ~/.ssh/deploy_key_SITE_ID<br>
+                                    &nbsp;&nbsp;&nbsp;&nbsp;IdentitiesOnly yes<br>
+                                    EOF<br>
+                                    chmod 600 ~/.ssh/config<br>
+                                    <br>
+                                    cat ~/.ssh/deploy_key_SITE_ID.pub
                                 </div>
                             <?php endif; ?>
                         </div>
@@ -1020,16 +1147,40 @@ $webhookUrl = $secretToken ? $deployScriptUrl . '?sat=' . urlencode($secretToken
             <?php if ($step === 2): ?>
                 <div>
                     <h2>Download Files & Generate SSH Keys</h2>
-                    <p style="margin-bottom: 20px;">This step will download the required files and generate SSH keys automatically.</p>
-                    
+                    <p style="margin-bottom: 20px;">This step will download the required files and generate a unique SSH key for this site.</p>
+
+                    <div class="alert alert-info" style="margin-bottom: 20px;">
+                        <strong>Why unique keys?</strong> GitHub requires each deploy key to be unique across all repositories.
+                        By using a site-specific identifier, each site gets its own SSH key, avoiding "key already in use" errors.
+                    </div>
+
                     <form method="POST">
                         <input type="hidden" name="step" value="2">
+
+                        <div class="form-group">
+                            <label for="site_identifier">Site Identifier *</label>
+                            <?php
+                            $defaultSiteId = isset($_POST['site_identifier']) ? $_POST['site_identifier'] : getDefaultSiteIdentifier();
+                            ?>
+                            <input type="text" id="site_identifier" name="site_identifier"
+                                   value="<?php echo htmlspecialchars($defaultSiteId); ?>"
+                                   placeholder="example-com" required
+                                   pattern="[a-z0-9\-]+"
+                                   title="Lowercase letters, numbers, and hyphens only">
+                            <small>
+                                Unique identifier for this site (auto-detected from domain).<br>
+                                Used to name the SSH key: <code>deploy_key_<?php echo htmlspecialchars($defaultSiteId ?: 'your-site'); ?></code><br>
+                                And SSH host alias: <code>github-<?php echo htmlspecialchars($defaultSiteId ?: 'your-site'); ?></code>
+                            </small>
+                        </div>
+
                         <button type="submit" class="btn">Download Files & Generate SSH Keys</button>
                     </form>
-                    
+
                     <?php if (!empty($success) && empty($errors)): ?>
                         <form method="POST" style="margin-top: 20px;">
                             <input type="hidden" name="step" value="3">
+                            <input type="hidden" name="site_identifier" value="<?php echo htmlspecialchars($currentSiteIdentifier ?? ''); ?>">
                             <button type="submit" class="btn">Continue to Configuration →</button>
                         </form>
                     <?php endif; ?>
@@ -1041,28 +1192,41 @@ $webhookUrl = $secretToken ? $deployScriptUrl . '?sat=' . urlencode($secretToken
                 <div>
                     <h2>Configuration</h2>
                     <p style="margin-bottom: 20px;">Enter your deployment configuration:</p>
-                    
+
+                    <?php
+                    // Get site identifier for display
+                    $displaySiteId = $currentSiteIdentifier ?? getDefaultSiteIdentifier();
+                    $displayHostAlias = getHostAliasName($displaySiteId);
+                    ?>
+
+                    <div class="alert alert-info" style="margin-bottom: 20px;">
+                        <strong>Site Identifier:</strong> <?php echo htmlspecialchars($displaySiteId); ?><br>
+                        <strong>SSH Host Alias:</strong> <code><?php echo htmlspecialchars($displayHostAlias); ?></code><br>
+                        <small>The repository URL will use this alias to select the correct SSH key automatically.</small>
+                    </div>
+
                     <form method="POST">
                         <input type="hidden" name="step" value="3">
-                        
+                        <input type="hidden" name="site_identifier" value="<?php echo htmlspecialchars($displaySiteId); ?>">
+
                         <div class="form-group">
                             <label for="secret_token">Secret Access Token *</label>
                             <div style="display: flex; align-items: center;">
-                                <input type="text" id="secret_token" name="secret_token" 
-                                       value="<?php echo isset($_POST['secret_token']) ? htmlspecialchars($_POST['secret_token']) : generateSecureToken(16); ?>" 
+                                <input type="text" id="secret_token" name="secret_token"
+                                       value="<?php echo isset($_POST['secret_token']) ? htmlspecialchars($_POST['secret_token']) : generateSecureToken(16); ?>"
                                        required>
                                 <button type="button" class="btn btn-generate" onclick="generateToken()">Generate</button>
                             </div>
                             <small>This token will be used to secure your webhook URL. Keep it secret!</small>
                         </div>
-                        
+
                         <div class="form-group">
                             <label for="repo_url">GitHub Repository URL *</label>
-                            <input type="text" id="repo_url" name="repo_url" 
-                                   value="<?php echo isset($_POST['repo_url']) ? htmlspecialchars($_POST['repo_url']) : ''; ?>" 
+                            <input type="text" id="repo_url" name="repo_url"
+                                   value="<?php echo isset($_POST['repo_url']) ? htmlspecialchars($_POST['repo_url']) : ''; ?>"
                                    placeholder="https://github.com/username/repository" required>
                             <small>Enter any GitHub URL format (https://github.com/user/repo or git@github.com:user/repo.git)<br>
-                            Will be automatically converted to SSH format: <code>git@github.com:user/repo.git</code></small>
+                            Will be converted to use host alias: <code>git@<?php echo htmlspecialchars($displayHostAlias); ?>:user/repo.git</code></small>
                         </div>
                         
                         <div class="form-group">
@@ -1094,10 +1258,24 @@ $webhookUrl = $secretToken ? $deployScriptUrl . '?sat=' . urlencode($secretToken
             
             <!-- Step 4: Results -->
             <?php if ($step === 4): ?>
+                <?php
+                // Get site identifier from POST or session for display
+                $resultSiteId = isset($_POST['site_identifier']) ? $_POST['site_identifier'] : (isset($_SESSION['site_identifier']) ? $_SESSION['site_identifier'] : $currentSiteIdentifier);
+                $resultHostAlias = getHostAliasName($resultSiteId);
+                ?>
                 <div>
-                    <h2>Setup Complete! 🎉</h2>
+                    <h2>Setup Complete!</h2>
                     <p style="margin-bottom: 30px;">Your deployment system is ready. Follow these final steps:</p>
-                    
+
+                    <!-- Site-specific key info -->
+                    <div class="alert alert-info" style="margin-bottom: 20px;">
+                        <strong>Unique Key Configuration</strong><br>
+                        <strong>Site ID:</strong> <?php echo htmlspecialchars($resultSiteId); ?><br>
+                        <strong>Key file:</strong> <code>~/.ssh/deploy_key_<?php echo htmlspecialchars($resultSiteId); ?></code><br>
+                        <strong>SSH alias:</strong> <code><?php echo htmlspecialchars($resultHostAlias); ?></code><br>
+                        <small>This unique configuration allows multiple sites on the same server to each have their own GitHub deploy key.</small>
+                    </div>
+
                     <!-- SSH Public Key -->
                     <?php if (!empty($sshPublicKey)): ?>
                         <div class="copy-section">
@@ -1108,7 +1286,7 @@ $webhookUrl = $secretToken ? $deployScriptUrl . '?sat=' . urlencode($secretToken
                                     <li>Go to your GitHub repository</li>
                                     <li>Navigate to Settings → Deploy keys</li>
                                     <li>Click "Add deploy key"</li>
-                                    <li>Title: <strong>Cpanel Deploy Key</strong></li>
+                                    <li>Title: <strong>Deploy Key - <?php echo htmlspecialchars($resultSiteId); ?></strong></li>
                                     <li>Paste the key below</li>
                                     <li><strong>Keep "Allow write access" UNCHECKED</strong></li>
                                     <li>Click "Add key"</li>
@@ -1148,21 +1326,39 @@ $webhookUrl = $secretToken ? $deployScriptUrl . '?sat=' . urlencode($secretToken
                     
                     <!-- Configuration Summary -->
                     <?php
-                    // Get repository URL and convert it for display
+                    // Get repository URL and convert it for display (with host alias)
                     $repoUrlInput = $_POST['repo_url'] ?? '';
-                    $repoUrl = !empty($repoUrlInput) ? convertGithubUrlToSsh($repoUrlInput) : '';
+                    $repoUrl = !empty($repoUrlInput) ? convertGithubUrlToSsh($repoUrlInput, $resultHostAlias) : '';
+                    $repoUrlStandard = !empty($repoUrlInput) ? convertGithubUrlToSsh($repoUrlInput) : '';
                     ?>
                     <div class="copy-section">
                         <h3>3. Configuration Summary</h3>
                         <div style="background: white; padding: 15px; border-radius: 6px; font-family: monospace; font-size: 13px;">
                             <strong>Secret Token:</strong> <?php echo htmlspecialchars($_POST['secret_token'] ?? ''); ?><br>
-                            <strong>Repository:</strong> <?php echo htmlspecialchars($repoUrl); ?><br>
-                            <?php if ($repoUrlInput !== $repoUrl): ?>
-                                <small style="color: #666; display: block; margin-left: 10px;">(Converted from: <?php echo htmlspecialchars($repoUrlInput); ?>)</small>
+                            <strong>Repository (with alias):</strong> <?php echo htmlspecialchars($repoUrl); ?><br>
+                            <?php if ($repoUrlInput !== $repoUrlStandard): ?>
+                                <small style="color: #666; display: block; margin-left: 10px;">(Original: <?php echo htmlspecialchars($repoUrlInput); ?>)</small>
                             <?php endif; ?>
+                            <strong>SSH Host Alias:</strong> <?php echo htmlspecialchars($resultHostAlias); ?> → github.com<br>
                             <strong>Branch:</strong> <?php echo htmlspecialchars($_POST['branch'] ?? 'main'); ?><br>
                             <strong>Target Directory:</strong> <?php echo htmlspecialchars($_POST['target_dir'] ?? ''); ?><br>
                             <strong>Config File:</strong> <?php echo htmlspecialchars(__DIR__ . '/deploy-config.php'); ?>
+                        </div>
+                    </div>
+
+                    <!-- Technical Note about SSH Config -->
+                    <div class="copy-section">
+                        <h3>4. How the SSH Host Alias Works</h3>
+                        <div style="background: #f8f9fa; padding: 15px; border-radius: 6px; font-size: 13px;">
+                            <p style="margin-bottom: 10px;">Your <code>~/.ssh/config</code> now contains an entry that maps <code><?php echo htmlspecialchars($resultHostAlias); ?></code> to github.com with your unique deploy key:</p>
+                            <pre style="background: #2d2d2d; color: #f8f8f2; padding: 10px; border-radius: 4px; overflow-x: auto; margin: 10px 0;">Host <?php echo htmlspecialchars($resultHostAlias); ?>
+
+    HostName github.com
+    User git
+    IdentityFile ~/.ssh/deploy_key_<?php echo htmlspecialchars($resultSiteId); ?>
+
+    IdentitiesOnly yes</pre>
+                            <p style="margin-top: 10px; color: #666;">When git connects to <code><?php echo htmlspecialchars($resultHostAlias); ?></code>, SSH automatically uses the correct key for this site.</p>
                         </div>
                     </div>
                     

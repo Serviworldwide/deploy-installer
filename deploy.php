@@ -184,8 +184,36 @@ if (!empty($pathsToAdd)) {
 	putenv('PATH=' . $newPath);
 }
 
-// Explicitly tell git which SSH key to use (prevents interactive prompts).
-putenv('GIT_SSH_COMMAND=ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes');
+// Ensure HOME is set so SSH can find ~/.ssh/config for host aliases
+// This is critical for the unique deploy key feature (site-specific keys)
+$homeDir = getenv('HOME');
+if (empty($homeDir)) {
+	// Try to determine home directory
+	if (function_exists('posix_getpwuid') && function_exists('posix_geteuid')) {
+		$userInfo = posix_getpwuid(posix_geteuid());
+		if (isset($userInfo['dir'])) {
+			$homeDir = $userInfo['dir'];
+		}
+	}
+	if (empty($homeDir)) {
+		// Fallback: extract from script path (cPanel standard: /home/username/public_html)
+		if (preg_match('#^(/home/[^/]+)/#', __DIR__, $matches)) {
+			$homeDir = $matches[1];
+		}
+	}
+	if (!empty($homeDir)) {
+		putenv('HOME=' . $homeDir);
+	}
+}
+
+// SSH key selection: If REMOTE_REPOSITORY uses a host alias (e.g., github-sitename),
+// the ~/.ssh/config will automatically select the correct key.
+// Only set GIT_SSH_COMMAND if there's no host alias (fallback to generic key).
+if (defined('REMOTE_REPOSITORY') && preg_match('/^git@github\.com:/', REMOTE_REPOSITORY)) {
+	// Standard github.com URL - use generic deploy key as fallback
+	putenv('GIT_SSH_COMMAND=ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes');
+}
+// If using a host alias (e.g., git@github-mysite:...), SSH config handles key selection
 
 // If there's authorization error, set the correct HTTP header.
 if (!isset($_GET['sat']) || $_GET['sat'] !== SECRET_ACCESS_TOKEN || SECRET_ACCESS_TOKEN === 'BetterChangeMeNowOrSufferTheConsequences') {

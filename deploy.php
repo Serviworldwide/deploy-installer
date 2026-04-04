@@ -161,6 +161,15 @@ if (!defined('COMPOSER_HOME')) define('COMPOSER_HOME', false);
  */
 if (!defined('EMAIL_ON_ERROR')) define('EMAIL_ON_ERROR', false);
 
+/**
+ * OPTIONAL
+ * Commands to execute after the repository is cloned/updated and rsync'd to
+ * TARGET_DIR. Useful for fixing file ownership and permissions on cPanel hosts.
+ *
+ * @var array List of shell commands to run post-deploy
+ */
+if (!defined('POST_DEPLOY_COMMANDS')) define('POST_DEPLOY_COMMANDS', array());
+
 // ===========================================[ Configuration end ]===
 
 // Ensure the PATH includes cPanel's third-party binaries (e.g., git).
@@ -440,6 +449,13 @@ if ($normalizedTargetDir !== '') {
 }
 
 // =======================================[ Post-Deployment steps ]===
+
+// Run any post-deploy commands (e.g. chown, chmod) defined in config
+if (defined('POST_DEPLOY_COMMANDS') && is_array(POST_DEPLOY_COMMANDS)) {
+	foreach (POST_DEPLOY_COMMANDS as $postCmd) {
+		$commands[] = $postCmd;
+	}
+}
 
 // Remove the TMP_DIR (depends on CLEAN_UP)
 if (CLEAN_UP) {

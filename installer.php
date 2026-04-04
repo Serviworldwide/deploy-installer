@@ -469,6 +469,22 @@ if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST') 
                 }
             }
 
+            // Add GitHub's host key to known_hosts so SSH doesn't prompt on first connect
+            $knownHostsFile = $sshDir . '/known_hosts';
+            $checkOutput = @shell_exec('ssh-keygen -F github.com -f ' . escapeshellarg($knownHostsFile) . ' 2>/dev/null');
+            if (empty(trim((string)$checkOutput))) {
+                $scanOutput = @shell_exec('ssh-keyscan -H github.com 2>/dev/null');
+                if (!empty(trim((string)$scanOutput))) {
+                    file_put_contents($knownHostsFile, $scanOutput, FILE_APPEND);
+                    @chmod($knownHostsFile, 0644);
+                    $success[] = 'GitHub host key added to known_hosts';
+                } else {
+                    $errors[] = 'Could not fetch GitHub host key via ssh-keyscan - you may need to add it manually';
+                }
+            } else {
+                $success[] = 'GitHub host key already present in known_hosts';
+            }
+
             // Store site identifier in session for next steps
             if (session_status() === PHP_SESSION_NONE) {
                 @session_start();
@@ -518,6 +534,12 @@ if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST') 
             $targetDir .= '/';
         }
         
+        // Extract cPanel username from target directory
+        $cpanelUser = '';
+        if (preg_match('#^/home/([^/]+)/#', $targetDir, $userMatch)) {
+            $cpanelUser = $userMatch[1];
+        }
+
         if (empty($errors)) {
             // Generate config file from scratch
             $configContent = "<?php
@@ -591,6 +613,13 @@ define('COMPOSER_HOME', false);
 
 // OPTIONAL: Email address to be notified on deployment failure.
 define('EMAIL_ON_ERROR', false);
+
+// OPTIONAL: Commands to execute after the repository is cloned/updated.
+" . (!empty($cpanelUser) ? "define('POST_DEPLOY_COMMANDS', array(
+    'chown -R {$cpanelUser}:{$cpanelUser} {$targetDir}',
+    'find {$targetDir} -type f -exec chmod 644 {} \\\\;',
+    'find {$targetDir} -type d -exec chmod 755 {} \\\\;',
+));" : "// define('POST_DEPLOY_COMMANDS', array());") . "
 ";
                 
                 // Write the config file

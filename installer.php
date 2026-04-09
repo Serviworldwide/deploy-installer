@@ -540,6 +540,18 @@ if (isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'POST') 
             $cpanelUser = $userMatch[1];
         }
 
+        // Detect npm/node paths now (runs as cPanel user with correct PATH)
+        $detectedNpmPath = trim((string)@shell_exec('which npm 2>/dev/null'));
+        if (empty($detectedNpmPath) || !file_exists($detectedNpmPath)) {
+            $detectedNpmPath = '';
+            $nvmGlob = glob(getHomeDir() . '/.nvm/versions/node/*/bin/npm');
+            if (!empty($nvmGlob)) {
+                rsort($nvmGlob); // latest version first
+                $detectedNpmPath = $nvmGlob[0];
+            }
+        }
+        $detectedNodeBinDir = !empty($detectedNpmPath) ? dirname($detectedNpmPath) : '';
+
         if (empty($errors)) {
             // Generate config file from scratch
             $configContent = "<?php
@@ -617,9 +629,12 @@ define('EMAIL_ON_ERROR', false);
 // OPTIONAL: Commands to execute after the repository is cloned/updated.
 " . (!empty($cpanelUser) ? "define('POST_DEPLOY_COMMANDS', array(
     'chown -R {$cpanelUser}:{$cpanelUser} {$targetDir}',
-    'find {$targetDir} -type f -exec chmod 644 {} \\\\;',
-    'find {$targetDir} -type d -exec chmod 755 {} \\\\;',
 ));" : "// define('POST_DEPLOY_COMMANDS', array());") . "
+
+// Node.js/npm paths detected at install time.
+// Used by deploy.php to run npm install + build for Next.js projects.
+define('NPM_PATH', '" . addslashes($detectedNpmPath) . "');
+define('NODE_BIN_DIR', '" . addslashes($detectedNodeBinDir) . "');
 ";
                 
                 // Write the config file

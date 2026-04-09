@@ -569,28 +569,13 @@ if ($deployOk) {
 		}
 	}
 	if ($runNpm) {
-		// Find npm binary — not always in PATH when running as web user
-		$npmPath = findBinary('npm');
+		// Use paths baked in by installer; fall back to runtime search for old configs
+		$npmPath = (defined('NPM_PATH') && NPM_PATH !== '') ? NPM_PATH : findBinary('npm');
+		$nodeBinDir = (defined('NODE_BIN_DIR') && NODE_BIN_DIR !== '') ? NODE_BIN_DIR : dirname((string)$npmPath);
 		if (empty($npmPath)) {
-			// Check cPanel EasyApache Node.js and nvm locations
-			$npmSearchPaths = array_merge(
-				glob('/opt/cpanel/ea-nodejs*/root/usr/bin/npm') ?: array(),
-				glob('/opt/cpanel/ea-nodejs*/bin/npm') ?: array(),
-				glob(getenv('HOME') . '/.nvm/versions/node/*/bin/npm') ?: array(),
-				array('/usr/local/bin/npm', '/usr/bin/npm')
-			);
-			foreach ($npmSearchPaths as $candidate) {
-				if (file_exists($candidate) && is_executable($candidate)) {
-					$npmPath = $candidate;
-					break;
-				}
-			}
-		}
-		if (empty($npmPath)) {
-			printf('<div class="error">npm not found. Install Node.js on the server or set USE_NPM to false.</div>');
+			printf('<div class="error">npm not found. Re-run the installer or define NPM_PATH in deploy-config.php.</div>');
 		} else {
-		// Prepend the node bin dir to PATH so npm can find the node binary
-		$nodeBinDir = dirname($npmPath);
+		// Prepend node bin dir to PATH so npm can find the node binary
 		putenv('PATH=' . $nodeBinDir . ':' . getenv('PATH'));
 		$targetDir = escapeshellarg(rtrim(TARGET_DIR, '/'));
 		$npmCommands = array(

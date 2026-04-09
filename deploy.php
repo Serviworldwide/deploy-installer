@@ -588,6 +588,9 @@ if ($deployOk) {
 		if (empty($npmPath)) {
 			printf('<div class="error">npm not found. Install Node.js on the server or set USE_NPM to false.</div>');
 		} else {
+		// Prepend the node bin dir to PATH so npm can find the node binary
+		$nodeBinDir = dirname($npmPath);
+		putenv('PATH=' . $nodeBinDir . ':' . getenv('PATH'));
 		$targetDir = escapeshellarg(rtrim(TARGET_DIR, '/'));
 		$npmCommands = array(
 			sprintf('cd %s && %s install --omit=dev', $targetDir, escapeshellarg($npmPath)),

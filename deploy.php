@@ -163,6 +163,16 @@ if (!defined('EMAIL_ON_ERROR')) define('EMAIL_ON_ERROR', false);
 
 /**
  * OPTIONAL
+ * Run npm install and npm run build after deployment.
+ * Set to true to force npm build regardless of project type.
+ * If false (default), Next.js is auto-detected via package.json.
+ *
+ * @var bool
+ */
+if (!defined('USE_NPM')) define('USE_NPM', false);
+
+/**
+ * OPTIONAL
  * Commands to execute after the repository is cloned/updated and rsync'd to
  * TARGET_DIR. Useful for fixing file ownership and permissions on cPanel hosts.
  *
@@ -467,6 +477,7 @@ if (CLEAN_UP) {
 
 // =======================================[ Run the command steps ]===
 $output = '';
+$deployOk = true;
 foreach ($commands as $command) {
 	set_time_limit(TIME_LIMIT); // Reset the time limit for each command
 	if (file_exists(TMP_DIR) && is_dir(TMP_DIR)) {
@@ -535,7 +546,61 @@ Cleaning up temporary files ...
 			$headers[] = sprintf('X-Mailer: PHP/%s', phpversion());
 			mail(EMAIL_ON_ERROR, $error, strip_tags(trim($output)), implode("\r\n", $headers));
 		}
+		$deployOk = false;
 		break;
+	}
+}
+
+// =====================================[ npm build (Next.js) ]===
+if ($deployOk) {
+	$runNpm = defined('USE_NPM') && USE_NPM === true;
+	if (!$runNpm) {
+		// Auto-detect Next.js via package.json in TARGET_DIR
+		$packageJsonPath = rtrim(TARGET_DIR, '/') . '/package.json';
+		if (file_exists($packageJsonPath)) {
+			$pkg = @json_decode(@file_get_contents($packageJsonPath), true);
+			if (is_array($pkg) && (
+				isset($pkg['dependencies']['next']) ||
+				isset($pkg['devDependencies']['next'])
+			)) {
+				$runNpm = true;
+			}
+		}
+	}
+	if ($runNpm) {
+		$targetDir = escapeshellarg(rtrim(TARGET_DIR, '/'));
+		$npmCommands = array(
+			sprintf('cd %s && npm install --omit=dev', $targetDir),
+			sprintf('cd %s && npm run build', $targetDir),
+		);
+		foreach ($npmCommands as $command) {
+			set_time_limit(TIME_LIMIT);
+			$rawOutput = shell_exec($command . ' 2>&1; echo "__EXIT_CODE__:$?"');
+			$return_code = null;
+			$tmp = array();
+			if (is_string($rawOutput)) {
+				$tmp = explode("\n", trim($rawOutput));
+				$lastLine = end($tmp);
+				if (is_string($lastLine) && str_starts_with($lastLine, '__EXIT_CODE__:')) {
+					$return_code = (int)substr($lastLine, strlen('__EXIT_CODE__:'));
+					array_pop($tmp);
+				}
+			}
+			printf('
+<span class="prompt">$</span> <span class="command">%s</span>
+<div class="output">%s</div>
+'
+				, htmlentities(trim($command))
+				, htmlentities(trim(implode("\n", $tmp)))
+			);
+			$output .= ob_get_contents();
+			ob_flush();
+			if ($return_code !== 0) {
+				header($_SERVER['SERVER_PROTOCOL'] . ' 500 Internal Server Error', true, 500);
+				printf('<div class="error">npm command failed! Check the output above.</div>');
+				break;
+			}
+		}
 	}
 }
 ?>

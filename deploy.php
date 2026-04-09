@@ -568,10 +568,30 @@ if ($deployOk) {
 		}
 	}
 	if ($runNpm) {
+		// Find npm binary — not always in PATH when running as web user
+		$npmPath = findBinary('npm');
+		if (empty($npmPath)) {
+			// Check cPanel EasyApache Node.js and nvm locations
+			$npmSearchPaths = array_merge(
+				glob('/opt/cpanel/ea-nodejs*/root/usr/bin/npm') ?: array(),
+				glob('/opt/cpanel/ea-nodejs*/bin/npm') ?: array(),
+				glob(getenv('HOME') . '/.nvm/versions/node/*/bin/npm') ?: array(),
+				array('/usr/local/bin/npm', '/usr/bin/npm')
+			);
+			foreach ($npmSearchPaths as $candidate) {
+				if (file_exists($candidate) && is_executable($candidate)) {
+					$npmPath = $candidate;
+					break;
+				}
+			}
+		}
+		if (empty($npmPath)) {
+			printf('<div class="error">npm not found. Install Node.js on the server or set USE_NPM to false.</div>');
+		} else {
 		$targetDir = escapeshellarg(rtrim(TARGET_DIR, '/'));
 		$npmCommands = array(
-			sprintf('cd %s && npm install --omit=dev', $targetDir),
-			sprintf('cd %s && npm run build', $targetDir),
+			sprintf('cd %s && %s install --omit=dev', $targetDir, escapeshellarg($npmPath)),
+			sprintf('cd %s && %s run build', $targetDir, escapeshellarg($npmPath)),
 		);
 		foreach ($npmCommands as $command) {
 			set_time_limit(TIME_LIMIT);
@@ -601,6 +621,7 @@ if ($deployOk) {
 				break;
 			}
 		}
+		} // end else (npm found)
 	}
 }
 ?>

@@ -442,6 +442,7 @@ $commands[] = sprintf(
 );
 
 // Ensure standard cPanel permissions on the document root after deployment.
+// Exclude node_modules and .next to avoid traversing large/temp-file-heavy directories.
 $normalizedTargetDir = rtrim(TARGET_DIR, '/');
 if ($normalizedTargetDir !== '') {
 	$commands[] = sprintf(
@@ -449,11 +450,11 @@ if ($normalizedTargetDir !== '') {
 		, escapeshellarg($normalizedTargetDir)
 	);
 	$commands[] = sprintf(
-		'find %s -type d -exec chmod 755 {} \\;'
+		'find %s -not -path "*/node_modules/*" -not -path "*/.next/*" -type d -exec chmod 755 {} \\;'
 		, escapeshellarg($normalizedTargetDir)
 	);
 	$commands[] = sprintf(
-		'find %s -type f -exec chmod 644 {} \\;'
+		'find %s -not -path "*/node_modules/*" -not -path "*/.next/*" -type f -exec chmod 644 {} \\;'
 		, escapeshellarg($normalizedTargetDir)
 	);
 }
@@ -597,7 +598,7 @@ if ($deployOk) {
 			sprintf('cd %s && %s run build', $targetDir, escapeshellarg($npmPath)),
 		);
 		foreach ($npmCommands as $command) {
-			set_time_limit(TIME_LIMIT);
+			set_time_limit(max(TIME_LIMIT, 300)); // npm can take several minutes
 			$rawOutput = shell_exec($command . ' 2>&1; echo "__EXIT_CODE__:$?"');
 			$return_code = null;
 			$tmp = array();

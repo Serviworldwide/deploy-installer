@@ -227,21 +227,21 @@ function convertGithubUrlToSsh($url, $hostAlias = null) {
     // If it's already in SSH format, handle it
     if (preg_match('/^git@([^:]+):([^\/]+)\/([^\/]+?)(?:\.git)?$/', $url, $matches)) {
         $username = $matches[2];
-        $repo = rtrim($matches[3], '.git');
+        $repo = preg_replace('/\.git$/', '', $matches[3]);
         return "git@{$gitHost}:{$username}/{$repo}.git";
     }
 
     // Handle https://github.com/username/repo format
     if (preg_match('#^https?://(www\.)?github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$#', $url, $matches)) {
         $username = $matches[2];
-        $repo = rtrim($matches[3], '.git');
+        $repo = preg_replace('/\.git$/', '', $matches[3]);
         return "git@{$gitHost}:{$username}/{$repo}.git";
     }
 
     // Handle github.com/username/repo format (without protocol)
     if (preg_match('#^(?:www\.)?github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$#', $url, $matches)) {
         $username = $matches[1];
-        $repo = rtrim($matches[2], '.git');
+        $repo = preg_replace('/\.git$/', '', $matches[2]);
         return "git@{$gitHost}:{$username}/{$repo}.git";
     }
 

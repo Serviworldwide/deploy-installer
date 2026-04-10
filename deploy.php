@@ -579,7 +579,7 @@ if ($deployOk) {
 		putenv('PATH=' . $nodeBinDir . ':' . getenv('PATH'));
 		$targetDir = escapeshellarg(rtrim(TARGET_DIR, '/'));
 		$npmCommands = array(
-			sprintf('cd %s && %s install --omit=dev', $targetDir, escapeshellarg($npmPath)),
+			sprintf('cd %s && %s install', $targetDir, escapeshellarg($npmPath)),
 			sprintf('cd %s && %s run build', $targetDir, escapeshellarg($npmPath)),
 		);
 		foreach ($npmCommands as $command) {

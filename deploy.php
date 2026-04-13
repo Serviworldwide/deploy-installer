@@ -173,6 +173,16 @@ if (!defined('USE_NPM')) define('USE_NPM', false);
 
 /**
  * OPTIONAL
+ * Fix file/directory permissions after deployment.
+ * Only needed once on first deploy — rsync preserves permissions on subsequent runs.
+ * Set to true on first deploy, then set back to false.
+ *
+ * @var boolean
+ */
+if (!defined('FIX_PERMISSIONS')) define('FIX_PERMISSIONS', false);
+
+/**
+ * OPTIONAL
  * Commands to execute after the repository is cloned/updated and rsync'd to
  * TARGET_DIR. Useful for fixing file ownership and permissions on cPanel hosts.
  *
@@ -441,22 +451,24 @@ $commands[] = sprintf(
 	, $exclude
 );
 
-// Ensure standard cPanel permissions on the document root after deployment.
-// Exclude node_modules and .next to avoid traversing large/temp-file-heavy directories.
-$normalizedTargetDir = rtrim(TARGET_DIR, '/');
-if ($normalizedTargetDir !== '') {
-	$commands[] = sprintf(
-		'chmod 755 %s'
-		, escapeshellarg($normalizedTargetDir)
-	);
-	$commands[] = sprintf(
-		'find %s -not -path "*/node_modules/*" -not -path "*/.next/*" -type d -exec chmod 755 {} \\;'
-		, escapeshellarg($normalizedTargetDir)
-	);
-	$commands[] = sprintf(
-		'find %s -not -path "*/node_modules/*" -not -path "*/.next/*" -type f -exec chmod 644 {} \\;'
-		, escapeshellarg($normalizedTargetDir)
-	);
+// Fix permissions only when FIX_PERMISSIONS is explicitly enabled.
+// Only needed on first deploy — rsync preserves permissions on subsequent runs.
+if (defined('FIX_PERMISSIONS') && FIX_PERMISSIONS === true) {
+	$normalizedTargetDir = rtrim(TARGET_DIR, '/');
+	if ($normalizedTargetDir !== '') {
+		$commands[] = sprintf(
+			'chmod 755 %s'
+			, escapeshellarg($normalizedTargetDir)
+		);
+		$commands[] = sprintf(
+			'find %s -not -path "*/node_modules/*" -not -path "*/.next/*" -type d -exec chmod 755 {} +'
+			, escapeshellarg($normalizedTargetDir)
+		);
+		$commands[] = sprintf(
+			'find %s -not -path "*/node_modules/*" -not -path "*/.next/*" -type f -exec chmod 644 {} +'
+			, escapeshellarg($normalizedTargetDir)
+		);
+	}
 }
 
 // =======================================[ Post-Deployment steps ]===

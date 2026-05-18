@@ -626,6 +626,11 @@ define('COMPOSER_HOME', false);
 // OPTIONAL: Email address to be notified on deployment failure.
 define('EMAIL_ON_ERROR', false);
 
+// OPTIONAL: Fix file/directory permissions after deployment.
+// Set to true on the FIRST deploy only, then back to false.
+// rsync preserves permissions on subsequent runs, so chmod every deploy is wasteful.
+define('FIX_PERMISSIONS', false);
+
 // OPTIONAL: Commands to execute after the repository is cloned/updated.
 " . (!empty($cpanelUser) ? "define('POST_DEPLOY_COMMANDS', array(
     'chown -R {$cpanelUser}:{$cpanelUser} {$targetDir}',

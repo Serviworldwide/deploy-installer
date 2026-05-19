@@ -268,6 +268,15 @@ function getDefaultSiteIdentifier() {
     $host = preg_replace('/:\d+$/', '', $host);
     // Remove www. prefix
     $host = preg_replace('/^www\./', '', $host);
+
+    // Include URL subdirectory so multiple installs under the same domain
+    // (e.g. /games/wordforge/, /games/mahjong/) each get a unique identifier.
+    $scriptPath = isset($_SERVER['SCRIPT_NAME']) ? dirname($_SERVER['SCRIPT_NAME']) : '';
+    $pathParts = array_values(array_filter(explode('/', $scriptPath), 'strlen'));
+    if (!empty($pathParts)) {
+        $host .= '-' . implode('-', $pathParts);
+    }
+
     return sanitizeSiteIdentifier($host);
 }
 
